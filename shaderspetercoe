@@ -2,21 +2,401 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
 
--- Remove GUI antigo se existir
+-- ===== SISTEMA DE BACKUP E RESET =====
+local ShaderBackup = {
+    originalLighting = {},
+    originalMaterials = {},
+    createdInstances = {},
+    connections = {},
+    renderStepped = nil
+}
+
+-- Função para fazer backup do estado original do Lighting
+local function backupLighting()
+    local properties = {
+        "Ambient", "Brightness", "ColorShift_Bottom", "ColorShift_Top",
+        "EnvironmentDiffuseScale", "EnvironmentSpecularScale", "GlobalShadows",
+        "OutdoorAmbient", "ShadowSoftness", "Technology", "ClockTime", "GeographicLatitude",
+        "ExposureCompensation", "FogColor", "FogEnd", "FogStart"
+    }
+
+    for _, prop in ipairs(properties) do
+        local success, value = pcall(function()
+            return Lighting[prop]
+        end)
+        if success then
+            ShaderBackup.originalLighting[prop] = value
+        end
+    end
+
+    for _, child in ipairs(Lighting:GetChildren()) do
+        ShaderBackup.originalLighting[child.Name] = true
+    end
+end
+
+-- Função para restaurar o estado original
+local function restoreOriginalState()
+    for _, conn in ipairs(ShaderBackup.connections) do
+        if conn then
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    ShaderBackup.connections = {}
+
+    if ShaderBackup.renderStepped then
+        pcall(function() ShaderBackup.renderStepped:Disconnect() end)
+        ShaderBackup.renderStepped = nil
+    end
+
+    for _, instance in ipairs(ShaderBackup.createdInstances) do
+        if instance and instance.Parent then
+            pcall(function() instance:Destroy() end)
+        end
+    end
+    ShaderBackup.createdInstances = {}
+
+    for prop, value in pairs(ShaderBackup.originalLighting) do
+        if type(value) ~= "boolean" then
+            pcall(function()
+                Lighting[prop] = value
+            end)
+        end
+    end
+
+    for _, child in ipairs(Lighting:GetChildren()) do
+        if not ShaderBackup.originalLighting[child.Name] then
+            pcall(function() child:Destroy() end)
+        end
+    end
+
+    for part, originalMaterial in pairs(ShaderBackup.originalMaterials) do
+        if part and part.Parent then
+            pcall(function()
+                part.Material = originalMaterial
+            end)
+        end
+    end
+    ShaderBackup.originalMaterials = {}
+
+    for _, gui in ipairs(playerGui:GetChildren()) do
+        if gui.Name == "ShaderPeterGUI" or gui.Name == "ShaderConfirmGUI" or gui.Name:match("Shader") then
+            pcall(function() gui:Destroy() end)
+        end
+    end
+
+    pcall(function()
+        Lighting.ColorCorrectionTint = Color3.new(1, 1, 1)
+    end)
+
+    print("✅ SHADER COMPLETAMENTE REMOVIDO - JOGO RESTAURADO AO NORMAL")
+end
+
+-- Fazer backup assim que o script iniciar
+backupLighting()
+
+-- ===== FUNÇÃO PARA CRIAR GUI DE CONFIRMAÇÃO =====
+local function showConfirmGUI()
+    -- Verifica se já existe e remove
+    local existingConfirm = playerGui:FindFirstChild("ShaderConfirmGUI")
+    if existingConfirm then
+        existingConfirm:Destroy()
+    end
+
+    -- Criar ScreenGui de confirmação
+    local confirmGui = Instance.new("ScreenGui")
+    confirmGui.Name = "ShaderConfirmGUI"
+    confirmGui.ResetOnSpawn = false
+    confirmGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    confirmGui.Parent = playerGui
+
+    -- Fundo escurecido (overlay)
+    local overlay = Instance.new("Frame")
+    overlay.Name = "Overlay"
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.Position = UDim2.new(0, 0, 0, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    overlay.BackgroundTransparency = 1
+    overlay.BorderSizePixel = 0
+    overlay.ZIndex = 100
+    overlay.Parent = confirmGui
+
+    -- Frame principal do modal
+    local modalFrame = Instance.new("Frame")
+    modalFrame.Name = "ModalFrame"
+    modalFrame.Size = UDim2.new(0, 400, 0, 220)
+    modalFrame.Position = UDim2.new(0.5, -200, 0.5, -110)
+    modalFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    modalFrame.BackgroundTransparency = 0.1
+    modalFrame.BorderSizePixel = 0
+    modalFrame.ZIndex = 101
+    modalFrame.Parent = confirmGui
+
+    local modalCorner = Instance.new("UICorner")
+    modalCorner.CornerRadius = UDim.new(0, 16)
+    modalCorner.Parent = modalFrame
+
+    local modalStroke = Instance.new("UIStroke")
+    modalStroke.Color = Color3.fromRGB(60, 60, 80)
+    modalStroke.Thickness = 1.5
+    modalStroke.Parent = modalFrame
+
+    -- Sombra do modal
+    local modalShadow = Instance.new("Frame")
+    modalShadow.Name = "Shadow"
+    modalShadow.Size = UDim2.new(1, 0, 1, 0)
+    modalShadow.Position = UDim2.new(0, 4, 0, 4)
+    modalShadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    modalShadow.BackgroundTransparency = 0.7
+    modalShadow.BorderSizePixel = 0
+    modalShadow.ZIndex = 100
+    modalShadow.Parent = modalFrame
+
+    local modalShadowCorner = Instance.new("UICorner")
+    modalShadowCorner.CornerRadius = UDim.new(0, 16)
+    modalShadowCorner.Parent = modalShadow
+
+    -- Ícone de alerta (círculo com !)
+    local alertIcon = Instance.new("Frame")
+    alertIcon.Name = "AlertIcon"
+    alertIcon.Size = UDim2.new(0, 50, 0, 50)
+    alertIcon.Position = UDim2.new(0.5, -25, 0, 20)
+    alertIcon.BackgroundColor3 = Color3.fromRGB(255, 180, 60)
+    alertIcon.BorderSizePixel = 0
+    alertIcon.ZIndex = 102
+    alertIcon.Parent = modalFrame
+
+    local alertIconCorner = Instance.new("UICorner")
+    alertIconCorner.CornerRadius = UDim.new(1, 0)
+    alertIconCorner.Parent = alertIcon
+
+    local alertText = Instance.new("TextLabel")
+    alertText.Name = "AlertText"
+    alertText.Size = UDim2.new(1, 0, 1, 0)
+    alertText.Position = UDim2.new(0, 0, 0, -2)
+    alertText.BackgroundTransparency = 1
+    alertText.Text = "!"
+    alertText.TextColor3 = Color3.fromRGB(25, 25, 35)
+    alertText.TextSize = 32
+    alertText.Font = Enum.Font.GothamBold
+    alertText.ZIndex = 103
+    alertText.Parent = alertIcon
+
+    -- Título da confirmação
+    local confirmTitle = Instance.new("TextLabel")
+    confirmTitle.Name = "ConfirmTitle"
+    confirmTitle.Size = UDim2.new(1, -40, 0, 30)
+    confirmTitle.Position = UDim2.new(0, 20, 0, 80)
+    confirmTitle.BackgroundTransparency = 1
+    confirmTitle.Text = "FECHAR SHADER"
+    confirmTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    confirmTitle.TextSize = 22
+    confirmTitle.Font = Enum.Font.GothamBold
+    confirmTitle.ZIndex = 102
+    confirmTitle.Parent = modalFrame
+
+    -- Mensagem
+    local confirmMessage = Instance.new("TextLabel")
+    confirmMessage.Name = "ConfirmMessage"
+    confirmMessage.Size = UDim2.new(1, -40, 0, 40)
+    confirmMessage.Position = UDim2.new(0, 20, 0, 112)
+    confirmMessage.BackgroundTransparency = 1
+    confirmMessage.Text = "Você tem certeza que quer fechar o shader? O jogo voltará ao normal."
+    confirmMessage.TextColor3 = Color3.fromRGB(180, 180, 200)
+    confirmMessage.TextSize = 14
+    confirmMessage.Font = Enum.Font.Gotham
+    confirmMessage.TextWrapped = true
+    confirmMessage.ZIndex = 102
+    confirmMessage.Parent = modalFrame
+
+    -- Container dos botões
+    local buttonsContainer = Instance.new("Frame")
+    buttonsContainer.Name = "ButtonsContainer"
+    buttonsContainer.Size = UDim2.new(1, -40, 0, 45)
+    buttonsContainer.Position = UDim2.new(0, 20, 0, 160)
+    buttonsContainer.BackgroundTransparency = 1
+    buttonsContainer.ZIndex = 102
+    buttonsContainer.Parent = modalFrame
+
+    -- Botão SIM (fechar shader)
+    local yesButton = Instance.new("TextButton")
+    yesButton.Name = "YesButton"
+    yesButton.Size = UDim2.new(0.48, 0, 1, 0)
+    yesButton.Position = UDim2.new(0, 0, 0, 0)
+    yesButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+    yesButton.BorderSizePixel = 0
+    yesButton.Text = "SIM, FECHAR"
+    yesButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    yesButton.TextSize = 16
+    yesButton.Font = Enum.Font.GothamBold
+    yesButton.ZIndex = 103
+    yesButton.Parent = buttonsContainer
+
+    local yesCorner = Instance.new("UICorner")
+    yesCorner.CornerRadius = UDim.new(0, 10)
+    yesCorner.Parent = yesButton
+
+    -- Botão NÃO (cancelar)
+    local noButton = Instance.new("TextButton")
+    noButton.Name = "NoButton"
+    noButton.Size = UDim2.new(0.48, 0, 1, 0)
+    noButton.Position = UDim2.new(0.52, 0, 0, 0)
+    noButton.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    noButton.BorderSizePixel = 0
+    noButton.Text = "NÃO, CANCELAR"
+    noButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    noButton.TextSize = 16
+    noButton.Font = Enum.Font.GothamBold
+    noButton.ZIndex = 103
+    noButton.Parent = buttonsContainer
+
+    local noCorner = Instance.new("UICorner")
+    noCorner.CornerRadius = UDim.new(0, 10)
+    noCorner.Parent = noButton
+
+    -- Botão X (fechar modal)
+    local closeButton = Instance.new("TextButton")
+    closeButton.Name = "CloseButton"
+    closeButton.Size = UDim2.new(0, 30, 0, 30)
+    closeButton.Position = UDim2.new(1, -40, 0, 10)
+    closeButton.BackgroundTransparency = 1
+    closeButton.Text = "✕"
+    closeButton.TextColor3 = Color3.fromRGB(150, 150, 170)
+    closeButton.TextSize = 20
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.ZIndex = 103
+    closeButton.Parent = modalFrame
+
+    -- Função para fechar o modal com animação
+    local function closeModal()
+        local closeOverlayTween = TweenService:Create(overlay, TweenInfo.new(0.3), {
+            BackgroundTransparency = 1
+        })
+        local closeModalTween = TweenService:Create(modalFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(0.5, -200, 0.5, -80),
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, 400, 0, 0)
+        })
+        local closeShadowTween = TweenService:Create(modalShadow, TweenInfo.new(0.3), {
+            BackgroundTransparency = 1
+        })
+
+        closeOverlayTween:Play()
+        closeModalTween:Play()
+        closeShadowTween:Play()
+
+        closeModalTween.Completed:Wait()
+        confirmGui:Destroy()
+    end
+
+    -- Hover effects botão SIM
+    yesButton.MouseEnter:Connect(function()
+        TweenService:Create(yesButton, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(255, 80, 80),
+            Size = UDim2.new(0.48, 2, 1, 2),
+            Position = UDim2.new(0, -1, 0, -1)
+        }):Play()
+    end)
+
+    yesButton.MouseLeave:Connect(function()
+        TweenService:Create(yesButton, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(220, 60, 60),
+            Size = UDim2.new(0.48, 0, 1, 0),
+            Position = UDim2.new(0, 0, 0, 0)
+        }):Play()
+    end)
+
+    -- Hover effects botão NÃO
+    noButton.MouseEnter:Connect(function()
+        TweenService:Create(noButton, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(80, 80, 100),
+            Size = UDim2.new(0.48, 2, 1, 2),
+            Position = UDim2.new(0.52, -1, 0, -1)
+        }):Play()
+    end)
+
+    noButton.MouseLeave:Connect(function()
+        TweenService:Create(noButton, TweenInfo.new(0.2), {
+            BackgroundColor3 = Color3.fromRGB(60, 60, 80),
+            Size = UDim2.new(0.48, 0, 1, 0),
+            Position = UDim2.new(0.52, 0, 0, 0)
+        }):Play()
+    end)
+
+    -- Hover botão X
+    closeButton.MouseEnter:Connect(function()
+        TweenService:Create(closeButton, TweenInfo.new(0.2), {
+            TextColor3 = Color3.fromRGB(255, 255, 255)
+        }):Play()
+    end)
+
+    closeButton.MouseLeave:Connect(function()
+        TweenService:Create(closeButton, TweenInfo.new(0.2), {
+            TextColor3 = Color3.fromRGB(150, 150, 170)
+        }):Play()
+    end)
+
+    -- Ações dos botões
+    yesButton.MouseButton1Click:Connect(function()
+        closeModal()
+        task.wait(0.35)
+        restoreOriginalState()
+    end)
+
+    noButton.MouseButton1Click:Connect(function()
+        closeModal()
+    end)
+
+    closeButton.MouseButton1Click:Connect(function()
+        closeModal()
+    end)
+
+    -- Animação de entrada
+    overlay.BackgroundTransparency = 1
+    modalFrame.Position = UDim2.new(0.5, -200, 0.5, -80)
+    modalFrame.BackgroundTransparency = 1
+    modalShadow.BackgroundTransparency = 1
+
+    local overlayTween = TweenService:Create(overlay, TweenInfo.new(0.3), {
+        BackgroundTransparency = 0.5
+    })
+    local modalEnterTween = TweenService:Create(modalFrame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, -200, 0.5, -110),
+        BackgroundTransparency = 0.1
+    })
+    local shadowEnterTween = TweenService:Create(modalShadow, TweenInfo.new(0.4), {
+        BackgroundTransparency = 0.7
+    })
+
+    overlayTween:Play()
+    modalEnterTween:Play()
+    shadowEnterTween:Play()
+end
+
+-- ===== HOTKEY DELETE PARA ABRIR CONFIRMAÇÃO =====
+local deleteConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed and input.KeyCode == Enum.KeyCode.Delete then
+        showConfirmGUI()
+    end
+end)
+
+table.insert(ShaderBackup.connections, deleteConnection)
+
+-- ===== SEU GUI ORIGINAL =====
 local existingGui = playerGui:FindFirstChild("ShaderPeterGUI")
 if existingGui then
     existingGui:Destroy()
 end
 
--- Criar ScreenGui principal
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "ShaderPeterGUI"
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = playerGui
 
--- Frame principal (fundo escuro moderno com blur)
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 420, 0, 280)
@@ -26,18 +406,15 @@ mainFrame.BackgroundTransparency = 0.1
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = screenGui
 
--- Cantos arredondados
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 16)
 corner.Parent = mainFrame
 
--- Borda sutil
 local stroke = Instance.new("UIStroke")
 stroke.Color = Color3.fromRGB(60, 60, 80)
 stroke.Thickness = 1.5
 stroke.Parent = mainFrame
 
--- Sombra (simulada com outro frame)
 local shadow = Instance.new("Frame")
 shadow.Name = "Shadow"
 shadow.Size = UDim2.new(1, 0, 1, 0)
@@ -52,7 +429,6 @@ local shadowCorner = Instance.new("UICorner")
 shadowCorner.CornerRadius = UDim.new(0, 16)
 shadowCorner.Parent = shadow
 
--- Título "SHADER DO PETER"
 local titleLabel = Instance.new("TextLabel")
 titleLabel.Name = "Title"
 titleLabel.Size = UDim2.new(1, -80, 0, 40)
@@ -65,7 +441,6 @@ titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = mainFrame
 
--- Subtítulo/decorativo
 local subtitle = Instance.new("TextLabel")
 subtitle.Name = "Subtitle"
 subtitle.Size = UDim2.new(1, -80, 0, 20)
@@ -78,7 +453,6 @@ subtitle.Font = Enum.Font.Gotham
 subtitle.TextXAlignment = Enum.TextXAlignment.Left
 subtitle.Parent = mainFrame
 
--- Container da foto do criador
 local avatarContainer = Instance.new("Frame")
 avatarContainer.Name = "AvatarContainer"
 avatarContainer.Size = UDim2.new(0, 70, 0, 70)
@@ -88,7 +462,7 @@ avatarContainer.BorderSizePixel = 0
 avatarContainer.Parent = mainFrame
 
 local avatarCorner = Instance.new("UICorner")
-avatarCorner.CornerRadius = UDim.new(1, 0) -- Círculo perfeito
+avatarCorner.CornerRadius = UDim.new(1, 0)
 avatarCorner.Parent = avatarContainer
 
 local avatarStroke = Instance.new("UIStroke")
@@ -96,7 +470,6 @@ avatarStroke.Color = Color3.fromRGB(100, 100, 255)
 avatarStroke.Thickness = 2
 avatarStroke.Parent = avatarContainer
 
--- Imagem do avatar (Roblox thumbnail API)
 local avatarImage = Instance.new("ImageLabel")
 avatarImage.Name = "AvatarImage"
 avatarImage.Size = UDim2.new(1, -6, 1, -6)
@@ -109,7 +482,6 @@ local avatarImageCorner = Instance.new("UICorner")
 avatarImageCorner.CornerRadius = UDim.new(1, 0)
 avatarImageCorner.Parent = avatarImage
 
--- Label "CRIADOR" abaixo da foto
 local creatorLabel = Instance.new("TextLabel")
 creatorLabel.Name = "CreatorLabel"
 creatorLabel.Size = UDim2.new(0, 70, 0, 20)
@@ -121,7 +493,6 @@ creatorLabel.TextSize = 11
 creatorLabel.Font = Enum.Font.GothamBold
 creatorLabel.Parent = mainFrame
 
--- Linha decorativa
 local line = Instance.new("Frame")
 line.Name = "Line"
 line.Size = UDim2.new(1, -40, 0, 2)
@@ -134,13 +505,12 @@ local lineCorner = Instance.new("UICorner")
 lineCorner.CornerRadius = UDim.new(1, 0)
 lineCorner.Parent = line
 
--- Descrição/Info
 local infoText = Instance.new("TextLabel")
 infoText.Name = "InfoText"
 infoText.Size = UDim2.new(1, -40, 0, 60)
 infoText.Position = UDim2.new(0, 20, 0, 145)
 infoText.BackgroundTransparency = 1
-infoText.Text = "Este shader irá melhorar a qualidade visual do jogo com efeitos avançados de iluminação e pós-processamento."
+infoText.Text = "Este shader irá melhorar a qualidade visual do jogo com efeitos avançados de iluminação e pós-processamento.\n\nPressione DELETE para remover o shader a qualquer momento."
 infoText.TextColor3 = Color3.fromRGB(180, 180, 200)
 infoText.TextSize = 14
 infoText.Font = Enum.Font.Gotham
@@ -148,7 +518,6 @@ infoText.TextWrapped = true
 infoText.TextXAlignment = Enum.TextXAlignment.Left
 infoText.Parent = mainFrame
 
--- Botão Executar
 local executeButton = Instance.new("TextButton")
 executeButton.Name = "ExecuteButton"
 executeButton.Size = UDim2.new(1, -40, 0, 50)
@@ -166,13 +535,11 @@ local buttonCorner = Instance.new("UICorner")
 buttonCorner.CornerRadius = UDim.new(0, 12)
 buttonCorner.Parent = executeButton
 
--- Efeito hover no botão
 local buttonStroke = Instance.new("UIStroke")
 buttonStroke.Color = Color3.fromRGB(120, 100, 255)
 buttonStroke.Thickness = 0
 buttonStroke.Parent = executeButton
 
--- Animação de entrada do GUI
 mainFrame.Position = UDim2.new(0.5, -210, 0.5, -100)
 mainFrame.BackgroundTransparency = 1
 shadow.BackgroundTransparency = 1
@@ -187,7 +554,6 @@ local shadowTween = TweenService:Create(shadow, TweenInfo.new(0.5), {
 enterTween:Play()
 shadowTween:Play()
 
--- Hover effects
 executeButton.MouseEnter:Connect(function()
     TweenService:Create(executeButton, TweenInfo.new(0.2), {
         BackgroundColor3 = Color3.fromRGB(100, 80, 255),
@@ -206,7 +572,6 @@ executeButton.MouseLeave:Connect(function()
     buttonStroke.Thickness = 0
 end)
 
--- Click effect
 executeButton.MouseButton1Down:Connect(function()
     TweenService:Create(executeButton, TweenInfo.new(0.1), {
         Size = UDim2.new(1, -44, 0, 48),
@@ -214,18 +579,14 @@ executeButton.MouseButton1Down:Connect(function()
     }):Play()
 end)
 
--- Ação ao clicar no botão
 executeButton.MouseButton1Click:Connect(function()
-    -- Feedback visual de clique
     TweenService:Create(executeButton, TweenInfo.new(0.1), {
         BackgroundColor3 = Color3.fromRGB(60, 200, 100)
     }):Play()
     executeButton.Text = "✓ SHADER EXECUTADO COM SUCESSO"
-    
-    -- Aguardar um pouco para mostrar a mensagem
+
     task.wait(1.5)
-    
-    -- Animação de saída e fechar GUI
+
     local exitTween = TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
         Position = UDim2.new(0.5, -210, 0.5, -100),
         BackgroundTransparency = 1,
@@ -234,18 +595,16 @@ executeButton.MouseButton1Click:Connect(function()
     local exitShadow = TweenService:Create(shadow, TweenInfo.new(0.4), {
         BackgroundTransparency = 1
     })
-    
+
     exitTween:Play()
     exitShadow:Play()
-    
+
     exitTween.Completed:Wait()
     screenGui:Destroy()
-    
-    -- Carregar o script do shader
+
     loadstring(game:HttpGet("https://raw.githubusercontent.com/Aedynjames17/test/refs/heads/main/shaderv1.1"))()
 end)
 
--- Tornar arrastável (opcional, mas útil)
 local dragging = false
 local dragStart = nil
 local startPos = nil
