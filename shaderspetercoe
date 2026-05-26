@@ -5,6 +5,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 local UserInputService = game:GetService("UserInputService")
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
 
 -- ===== SISTEMA DE BACKUP E RESET =====
 local ShaderBackup = {
@@ -15,7 +17,6 @@ local ShaderBackup = {
     renderStepped = nil
 }
 
--- Função para fazer backup do estado original do Lighting
 local function backupLighting()
     local properties = {
         "Ambient", "Brightness", "ColorShift_Bottom", "ColorShift_Top",
@@ -23,7 +24,6 @@ local function backupLighting()
         "OutdoorAmbient", "ShadowSoftness", "Technology", "ClockTime", "GeographicLatitude",
         "ExposureCompensation", "FogColor", "FogEnd", "FogStart"
     }
-
     for _, prop in ipairs(properties) do
         local success, value = pcall(function()
             return Lighting[prop]
@@ -32,13 +32,11 @@ local function backupLighting()
             ShaderBackup.originalLighting[prop] = value
         end
     end
-
     for _, child in ipairs(Lighting:GetChildren()) do
         ShaderBackup.originalLighting[child.Name] = true
     end
 end
 
--- Função para restaurar o estado original
 local function restoreOriginalState()
     for _, conn in ipairs(ShaderBackup.connections) do
         if conn then
@@ -46,19 +44,16 @@ local function restoreOriginalState()
         end
     end
     ShaderBackup.connections = {}
-
     if ShaderBackup.renderStepped then
         pcall(function() ShaderBackup.renderStepped:Disconnect() end)
         ShaderBackup.renderStepped = nil
     end
-
     for _, instance in ipairs(ShaderBackup.createdInstances) do
         if instance and instance.Parent then
             pcall(function() instance:Destroy() end)
         end
     end
     ShaderBackup.createdInstances = {}
-
     for prop, value in pairs(ShaderBackup.originalLighting) do
         if type(value) ~= "boolean" then
             pcall(function()
@@ -66,13 +61,11 @@ local function restoreOriginalState()
             end)
         end
     end
-
     for _, child in ipairs(Lighting:GetChildren()) do
         if not ShaderBackup.originalLighting[child.Name] then
             pcall(function() child:Destroy() end)
         end
     end
-
     for part, originalMaterial in pairs(ShaderBackup.originalMaterials) do
         if part and part.Parent then
             pcall(function()
@@ -81,39 +74,196 @@ local function restoreOriginalState()
         end
     end
     ShaderBackup.originalMaterials = {}
-
     for _, gui in ipairs(playerGui:GetChildren()) do
         if gui.Name == "ShaderPeterGUI" or gui.Name == "ShaderConfirmGUI" or gui.Name:match("Shader") then
             pcall(function() gui:Destroy() end)
         end
     end
-
     pcall(function()
         Lighting.ColorCorrectionTint = Color3.new(1, 1, 1)
     end)
-
     print("✅ SHADER COMPLETAMENTE REMOVIDO - JOGO RESTAURADO AO NORMAL")
 end
 
--- Fazer backup assim que o script iniciar
 backupLighting()
+
+-- ===== ANIMAÇÃO ÉPICA DE TRANSIÇÃO =====
+local function playShutdownAnimation()
+    local camera = Workspace.CurrentCamera
+    local originalCFrame = camera.CFrame
+
+    local effectGui = Instance.new("ScreenGui")
+    effectGui.Name = "ShaderEffectGUI"
+    effectGui.ResetOnSpawn = false
+    effectGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    effectGui.Parent = playerGui
+
+    local flash = Instance.new("Frame")
+    flash.Name = "Flash"
+    flash.Size = UDim2.new(1, 0, 1, 0)
+    flash.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    flash.BackgroundTransparency = 1
+    flash.BorderSizePixel = 0
+    flash.ZIndex = 999
+    flash.Parent = effectGui
+
+    local particles = {}
+    for i = 1, 30 do
+        local particle = Instance.new("Frame")
+        particle.Size = UDim2.new(0, math.random(2, 6), 0, math.random(2, 6))
+        particle.Position = UDim2.new(math.random(), 0, 1, 0)
+        particle.BackgroundColor3 = Color3.fromRGB(
+            math.random(100, 255),
+            math.random(100, 255),
+            math.random(200, 255)
+        )
+        particle.BackgroundTransparency = 0.3
+        particle.BorderSizePixel = 0
+        particle.ZIndex = 998
+        particle.Parent = effectGui
+        local pCorner = Instance.new("UICorner")
+        pCorner.CornerRadius = UDim.new(1, 0)
+        pCorner.Parent = particle
+        table.insert(particles, particle)
+    end
+
+    TweenService:Create(flash, TweenInfo.new(0.15), {
+        BackgroundTransparency = 0
+    }):Play()
+    task.wait(0.15)
+
+    for _, particle in ipairs(particles) do
+        local duration = math.random(0.8, 1.5)
+        local endY = math.random(-0.5, -0.2)
+        TweenService:Create(particle, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Position = UDim2.new(particle.Position.X.Scale, 0, endY, 0),
+            BackgroundTransparency = 1,
+            Size = UDim2.new(0, 0, 0, 0)
+        }):Play()
+    end
+
+    local shakeConnection
+    local shakeStart = tick()
+    shakeConnection = RunService.RenderStepped:Connect(function()
+        local elapsed = tick() - shakeStart
+        if elapsed > 1.2 then
+            shakeConnection:Disconnect()
+            return
+        end
+        local intensity = (1.2 - elapsed) * 0.3
+        camera.CFrame = originalCFrame * CFrame.new(
+            math.random(-100, 100) / 100 * intensity,
+            math.random(-100, 100) / 100 * intensity,
+            math.random(-50, 50) / 100 * intensity
+        )
+    end)
+
+    TweenService:Create(flash, TweenInfo.new(0.4), {
+        BackgroundTransparency = 1
+    }):Play()
+
+    local darkScreen = Instance.new("Frame")
+    darkScreen.Name = "DarkScreen"
+    darkScreen.Size = UDim2.new(1, 0, 1, 0)
+    darkScreen.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    darkScreen.BackgroundTransparency = 1
+    darkScreen.BorderSizePixel = 0
+    darkScreen.ZIndex = 997
+    darkScreen.Parent = effectGui
+
+    TweenService:Create(darkScreen, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+        BackgroundTransparency = 0
+    }):Play()
+
+    task.wait(0.5)
+
+    restoreOriginalState()
+    camera.CFrame = originalCFrame
+
+    local rebuildFlash = Instance.new("Frame")
+    rebuildFlash.Name = "RebuildFlash"
+    rebuildFlash.Size = UDim2.new(1, 0, 1, 0)
+    rebuildFlash.BackgroundColor3 = Color3.fromRGB(200, 220, 255)
+    rebuildFlash.BackgroundTransparency = 0
+    rebuildFlash.BorderSizePixel = 0
+    rebuildFlash.ZIndex = 999
+    rebuildFlash.Parent = effectGui
+
+    local rebuildParticles = {}
+    for i = 1, 20 do
+        local rp = Instance.new("Frame")
+        rp.Size = UDim2.new(0, math.random(3, 8), 0, math.random(3, 8))
+        rp.Position = UDim2.new(math.random(), 0, -0.2, 0)
+        rp.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        rp.BackgroundTransparency = 0.5
+        rp.BorderSizePixel = 0
+        rp.ZIndex = 998
+        rp.Parent = effectGui
+        local rpCorner = Instance.new("UICorner")
+        rpCorner.CornerRadius = UDim.new(1, 0)
+        rpCorner.Parent = rp
+        table.insert(rebuildParticles, rp)
+    end
+
+    for _, rp in ipairs(rebuildParticles) do
+        TweenService:Create(rp, TweenInfo.new(math.random(0.5, 1.2), Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(rp.Position.X.Scale, 0, 1.2, 0),
+            BackgroundTransparency = 1
+        }):Play()
+    end
+
+    TweenService:Create(rebuildFlash, TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 1
+    }):Play()
+
+    TweenService:Create(darkScreen, TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 1
+    }):Play()
+
+    task.wait(1.5)
+    effectGui:Destroy()
+
+    local doneGui = Instance.new("ScreenGui")
+    doneGui.Name = "ShaderDoneGUI"
+    doneGui.ResetOnSpawn = false
+    doneGui.Parent = playerGui
+
+    local doneText = Instance.new("TextLabel")
+    doneText.Size = UDim2.new(0, 300, 0, 40)
+    doneText.Position = UDim2.new(0.5, -150, 0.85, 0)
+    doneText.BackgroundTransparency = 1
+    doneText.Text = "✓ MUNDO RESTAURADO"
+    doneText.TextColor3 = Color3.fromRGB(100, 255, 150)
+    doneText.TextSize = 18
+    doneText.Font = Enum.Font.GothamBold
+    doneText.TextTransparency = 1
+    doneText.Parent = doneGui
+
+    TweenService:Create(doneText, TweenInfo.new(0.5), {
+        TextTransparency = 0
+    }):Play()
+
+    task.wait(2)
+    TweenService:Create(doneText, TweenInfo.new(0.5), {
+        TextTransparency = 1
+    }):Play()
+    task.wait(0.5)
+    doneGui:Destroy()
+end
 
 -- ===== FUNÇÃO PARA CRIAR GUI DE CONFIRMAÇÃO =====
 local function showConfirmGUI()
-    -- Verifica se já existe e remove
     local existingConfirm = playerGui:FindFirstChild("ShaderConfirmGUI")
     if existingConfirm then
         existingConfirm:Destroy()
     end
 
-    -- Criar ScreenGui de confirmação
     local confirmGui = Instance.new("ScreenGui")
     confirmGui.Name = "ShaderConfirmGUI"
     confirmGui.ResetOnSpawn = false
     confirmGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     confirmGui.Parent = playerGui
 
-    -- Fundo escurecido (overlay)
     local overlay = Instance.new("Frame")
     overlay.Name = "Overlay"
     overlay.Size = UDim2.new(1, 0, 1, 0)
@@ -124,7 +274,6 @@ local function showConfirmGUI()
     overlay.ZIndex = 100
     overlay.Parent = confirmGui
 
-    -- Frame principal do modal
     local modalFrame = Instance.new("Frame")
     modalFrame.Name = "ModalFrame"
     modalFrame.Size = UDim2.new(0, 400, 0, 220)
@@ -144,7 +293,6 @@ local function showConfirmGUI()
     modalStroke.Thickness = 1.5
     modalStroke.Parent = modalFrame
 
-    -- Sombra do modal
     local modalShadow = Instance.new("Frame")
     modalShadow.Name = "Shadow"
     modalShadow.Size = UDim2.new(1, 0, 1, 0)
@@ -159,7 +307,6 @@ local function showConfirmGUI()
     modalShadowCorner.CornerRadius = UDim.new(0, 16)
     modalShadowCorner.Parent = modalShadow
 
-    -- Ícone de alerta (círculo com !)
     local alertIcon = Instance.new("Frame")
     alertIcon.Name = "AlertIcon"
     alertIcon.Size = UDim2.new(0, 50, 0, 50)
@@ -185,7 +332,6 @@ local function showConfirmGUI()
     alertText.ZIndex = 103
     alertText.Parent = alertIcon
 
-    -- Título da confirmação
     local confirmTitle = Instance.new("TextLabel")
     confirmTitle.Name = "ConfirmTitle"
     confirmTitle.Size = UDim2.new(1, -40, 0, 30)
@@ -198,7 +344,6 @@ local function showConfirmGUI()
     confirmTitle.ZIndex = 102
     confirmTitle.Parent = modalFrame
 
-    -- Mensagem
     local confirmMessage = Instance.new("TextLabel")
     confirmMessage.Name = "ConfirmMessage"
     confirmMessage.Size = UDim2.new(1, -40, 0, 40)
@@ -212,7 +357,6 @@ local function showConfirmGUI()
     confirmMessage.ZIndex = 102
     confirmMessage.Parent = modalFrame
 
-    -- Container dos botões
     local buttonsContainer = Instance.new("Frame")
     buttonsContainer.Name = "ButtonsContainer"
     buttonsContainer.Size = UDim2.new(1, -40, 0, 45)
@@ -221,7 +365,6 @@ local function showConfirmGUI()
     buttonsContainer.ZIndex = 102
     buttonsContainer.Parent = modalFrame
 
-    -- Botão SIM (fechar shader)
     local yesButton = Instance.new("TextButton")
     yesButton.Name = "YesButton"
     yesButton.Size = UDim2.new(0.48, 0, 1, 0)
@@ -239,7 +382,6 @@ local function showConfirmGUI()
     yesCorner.CornerRadius = UDim.new(0, 10)
     yesCorner.Parent = yesButton
 
-    -- Botão NÃO (cancelar)
     local noButton = Instance.new("TextButton")
     noButton.Name = "NoButton"
     noButton.Size = UDim2.new(0.48, 0, 1, 0)
@@ -257,7 +399,6 @@ local function showConfirmGUI()
     noCorner.CornerRadius = UDim.new(0, 10)
     noCorner.Parent = noButton
 
-    -- Botão X (fechar modal)
     local closeButton = Instance.new("TextButton")
     closeButton.Name = "CloseButton"
     closeButton.Size = UDim2.new(0, 30, 0, 30)
@@ -270,7 +411,6 @@ local function showConfirmGUI()
     closeButton.ZIndex = 103
     closeButton.Parent = modalFrame
 
-    -- Função para fechar o modal com animação
     local function closeModal()
         local closeOverlayTween = TweenService:Create(overlay, TweenInfo.new(0.3), {
             BackgroundTransparency = 1
@@ -283,16 +423,13 @@ local function showConfirmGUI()
         local closeShadowTween = TweenService:Create(modalShadow, TweenInfo.new(0.3), {
             BackgroundTransparency = 1
         })
-
         closeOverlayTween:Play()
         closeModalTween:Play()
         closeShadowTween:Play()
-
         closeModalTween.Completed:Wait()
         confirmGui:Destroy()
     end
 
-    -- Hover effects botão SIM
     yesButton.MouseEnter:Connect(function()
         TweenService:Create(yesButton, TweenInfo.new(0.2), {
             BackgroundColor3 = Color3.fromRGB(255, 80, 80),
@@ -300,7 +437,6 @@ local function showConfirmGUI()
             Position = UDim2.new(0, -1, 0, -1)
         }):Play()
     end)
-
     yesButton.MouseLeave:Connect(function()
         TweenService:Create(yesButton, TweenInfo.new(0.2), {
             BackgroundColor3 = Color3.fromRGB(220, 60, 60),
@@ -309,7 +445,6 @@ local function showConfirmGUI()
         }):Play()
     end)
 
-    -- Hover effects botão NÃO
     noButton.MouseEnter:Connect(function()
         TweenService:Create(noButton, TweenInfo.new(0.2), {
             BackgroundColor3 = Color3.fromRGB(80, 80, 100),
@@ -317,7 +452,6 @@ local function showConfirmGUI()
             Position = UDim2.new(0.52, -1, 0, -1)
         }):Play()
     end)
-
     noButton.MouseLeave:Connect(function()
         TweenService:Create(noButton, TweenInfo.new(0.2), {
             BackgroundColor3 = Color3.fromRGB(60, 60, 80),
@@ -326,35 +460,30 @@ local function showConfirmGUI()
         }):Play()
     end)
 
-    -- Hover botão X
     closeButton.MouseEnter:Connect(function()
         TweenService:Create(closeButton, TweenInfo.new(0.2), {
             TextColor3 = Color3.fromRGB(255, 255, 255)
         }):Play()
     end)
-
     closeButton.MouseLeave:Connect(function()
         TweenService:Create(closeButton, TweenInfo.new(0.2), {
             TextColor3 = Color3.fromRGB(150, 150, 170)
         }):Play()
     end)
 
-    -- Ações dos botões
     yesButton.MouseButton1Click:Connect(function()
         closeModal()
         task.wait(0.35)
-        restoreOriginalState()
+        playShutdownAnimation()
     end)
 
     noButton.MouseButton1Click:Connect(function()
         closeModal()
     end)
-
     closeButton.MouseButton1Click:Connect(function()
         closeModal()
     end)
 
-    -- Animação de entrada
     overlay.BackgroundTransparency = 1
     modalFrame.Position = UDim2.new(0.5, -200, 0.5, -80)
     modalFrame.BackgroundTransparency = 1
@@ -370,22 +499,20 @@ local function showConfirmGUI()
     local shadowEnterTween = TweenService:Create(modalShadow, TweenInfo.new(0.4), {
         BackgroundTransparency = 0.7
     })
-
     overlayTween:Play()
     modalEnterTween:Play()
     shadowEnterTween:Play()
 end
 
--- ===== HOTKEY DELETE PARA ABRIR CONFIRMAÇÃO =====
+-- ===== HOTKEY DELETE =====
 local deleteConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode.Delete then
         showConfirmGUI()
     end
 end)
-
 table.insert(ShaderBackup.connections, deleteConnection)
 
--- ===== SEU GUI ORIGINAL =====
+-- ===== GUI PRINCIPAL (ORIGINAL) =====
 local existingGui = playerGui:FindFirstChild("ShaderPeterGUI")
 if existingGui then
     existingGui:Destroy()
@@ -510,7 +637,7 @@ infoText.Name = "InfoText"
 infoText.Size = UDim2.new(1, -40, 0, 60)
 infoText.Position = UDim2.new(0, 20, 0, 145)
 infoText.BackgroundTransparency = 1
-infoText.Text = "Este shader irá melhorar a qualidade visual do jogo com efeitos avançados de iluminação e pós-processamento.\n\nPressione DELETE para remover o shader."
+infoText.Text = "Este shader irá melhorar a qualidade visual do jogo com efeitos avançados de iluminação e pós-processamento.\n\nPressione DELETE para remover o shader a qualquer momento."
 infoText.TextColor3 = Color3.fromRGB(180, 180, 200)
 infoText.TextSize = 14
 infoText.Font = Enum.Font.Gotham
@@ -584,9 +711,7 @@ executeButton.MouseButton1Click:Connect(function()
         BackgroundColor3 = Color3.fromRGB(60, 200, 100)
     }):Play()
     executeButton.Text = "✓ SHADER EXECUTADO COM SUCESSO"
-
     task.wait(1.5)
-
     local exitTween = TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
         Position = UDim2.new(0.5, -210, 0.5, -100),
         BackgroundTransparency = 1,
@@ -595,13 +720,10 @@ executeButton.MouseButton1Click:Connect(function()
     local exitShadow = TweenService:Create(shadow, TweenInfo.new(0.4), {
         BackgroundTransparency = 1
     })
-
     exitTween:Play()
     exitShadow:Play()
-
     exitTween.Completed:Wait()
     screenGui:Destroy()
-
     loadstring(game:HttpGet("https://raw.githubusercontent.com/Aedynjames17/test/refs/heads/main/shaderv1.1"))()
 end)
 
