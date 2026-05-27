@@ -38,6 +38,7 @@ local function backupLighting()
 end
 
 local function restoreOriginalState()
+    -- Desconecta todas as conexões
     for _, conn in ipairs(ShaderBackup.connections) do
         if conn then
             pcall(function() conn:Disconnect() end)
@@ -48,24 +49,121 @@ local function restoreOriginalState()
         pcall(function() ShaderBackup.renderStepped:Disconnect() end)
         ShaderBackup.renderStepped = nil
     end
+
+    -- Destrói instâncias criadas pelo shader
     for _, instance in ipairs(ShaderBackup.createdInstances) do
         if instance and instance.Parent then
             pcall(function() instance:Destroy() end)
         end
     end
     ShaderBackup.createdInstances = {}
-    for prop, value in pairs(ShaderBackup.originalLighting) do
-        if type(value) ~= "boolean" then
-            pcall(function()
-                Lighting[prop] = value
-            end)
+
+    -- ============================================
+    -- RESTAURAÇÃO COMPLETA DO CÉU E ILUMINAÇÃO
+    -- ============================================
+
+    -- Remove TODOS os efeitos de pós-processamento
+    local postEffectTypes = {
+        "BlurEffect", "ColorCorrectionEffect", "DepthOfFieldEffect",
+        "SunRaysEffect", "BloomEffect", "Atmosphere", "Clouds", "Sky"
+    }
+
+    for _, effectType in ipairs(postEffectTypes) do
+        for _, child in ipairs(Lighting:GetChildren()) do
+            if child:IsA(effectType) then
+                if not ShaderBackup.originalLighting[child.Name] then
+                    pcall(function() child:Destroy() end)
+                end
+            end
         end
     end
+
+    -- Remove QUALQUER PostEffect residual (genérico)
     for _, child in ipairs(Lighting:GetChildren()) do
-        if not ShaderBackup.originalLighting[child.Name] then
+        if child:IsA("PostEffect") then
             pcall(function() child:Destroy() end)
         end
     end
+
+    -- Remove Atmosphere e Clouds se existirem
+    for _, child in ipairs(Lighting:GetChildren()) do
+        if child:IsA("Atmosphere") or child:IsA("Clouds") then
+            pcall(function() child:Destroy() end)
+        end
+    end
+
+    -- Cria um Sky padrão do Roblox (céu normal)
+    local existingSky = Lighting:FindFirstChildOfClass("Sky")
+    if existingSky then
+        pcall(function() existingSky:Destroy() end)
+    end
+
+    local defaultSky = Instance.new("Sky")
+    defaultSky.Name = "DefaultSky"
+    defaultSky.SkyboxBk = "rbxassetid://6412503613"
+    defaultSky.SkyboxDn = "rbxassetid://6412504679"
+    defaultSky.SkyboxFt = "rbxassetid://6412504335"
+    defaultSky.SkyboxLf = "rbxassetid://6412503990"
+    defaultSky.SkyboxRt = "rbxassetid://6412503832"
+    defaultSky.SkyboxUp = "rbxassetid://6412504253"
+    defaultSky.SunTextureId = "rbxassetid://6196665106"
+    defaultSky.MoonTextureId = "rbxassetid://6196668029"
+    defaultSky.SunAngularSize = 11
+    defaultSky.MoonAngularSize = 11
+    defaultSky.StarCount = 3000
+    defaultSky.Parent = Lighting
+
+    -- ============================================
+    -- RESET COMPLETO DA CÂMERA (ANTI-EMBAÇAMENTO)
+    -- ============================================
+
+    -- Remove TODOS os efeitos na câmera
+    for _, child in ipairs(Camera:GetChildren()) do
+        pcall(function() child:Destroy() end)
+    end
+
+    -- Reset forçado de propriedades da câmera
+    pcall(function()
+        Camera.FieldOfView = 70
+        Camera.CameraType = Enum.CameraType.Custom
+    end)
+
+    -- ============================================
+    -- RESET DAS PROPRIEDADES DE ILUMINAÇÃO
+    -- ============================================
+
+    -- Restaura propriedades do backup se existirem, senão usa padrão Roblox
+    local function restoreOrDefault(prop, defaultValue)
+        pcall(function()
+            if ShaderBackup.originalLighting[prop] ~= nil then
+                Lighting[prop] = ShaderBackup.originalLighting[prop]
+            else
+                Lighting[prop] = defaultValue
+            end
+        end)
+    end
+
+    restoreOrDefault("Ambient", Color3.fromRGB(127, 127, 127))
+    restoreOrDefault("Brightness", 2)
+    restoreOrDefault("ColorShift_Bottom", Color3.fromRGB(0, 0, 0))
+    restoreOrDefault("ColorShift_Top", Color3.fromRGB(0, 0, 0))
+    restoreOrDefault("EnvironmentDiffuseScale", 1)
+    restoreOrDefault("EnvironmentSpecularScale", 1)
+    restoreOrDefault("GlobalShadows", true)
+    restoreOrDefault("OutdoorAmbient", Color3.fromRGB(127, 127, 127))
+    restoreOrDefault("ShadowSoftness", 0.2)
+    restoreOrDefault("Technology", Enum.Technology.Future)
+    restoreOrDefault("ClockTime", 14)
+    restoreOrDefault("GeographicLatitude", 41.733)
+    restoreOrDefault("ExposureCompensation", 0)
+    restoreOrDefault("FogColor", Color3.fromRGB(192, 192, 192))
+    restoreOrDefault("FogEnd", 100000)
+    restoreOrDefault("FogStart", 0)
+
+    -- ============================================
+    -- RESTAURA MATERIAIS DAS PARTES
+    -- ============================================
+
     for part, originalMaterial in pairs(ShaderBackup.originalMaterials) do
         if part and part.Parent then
             pcall(function()
@@ -74,14 +172,35 @@ local function restoreOriginalState()
         end
     end
     ShaderBackup.originalMaterials = {}
+
+    -- ============================================
+    -- REMOVE GUIs DO SHADER
+    -- ============================================
+
     for _, gui in ipairs(playerGui:GetChildren()) do
         if gui.Name == "ShaderPeterGUI" or gui.Name == "ShaderConfirmGUI" or gui.Name:match("Shader") then
             pcall(function() gui:Destroy() end)
         end
     end
+
+    -- ============================================
+    -- LIMPEZA FINAL - GARANTIA ABSOLUTA
+    -- ============================================
+
+    -- Segunda passagem: remove QUALQUER coisa que possa causar embaçamento
+    for _, child in ipairs(Lighting:GetChildren()) do
+        if child:IsA("PostEffect") or child:IsA("Atmosphere") or child:IsA("Clouds") or child:IsA("Sky") then
+            pcall(function() child:Destroy() end)
+        end
+    end
+
+    -- Força atualização do céu
     pcall(function()
-        Lighting.ColorCorrectionTint = Color3.new(1, 1, 1)
+        Lighting.OutdoorAmbient = Color3.fromRGB(127, 127, 127)
+        Lighting.Ambient = Color3.fromRGB(127, 127, 127)
+        Lighting.Brightness = 2
     end)
+
     print("✅ SHADER COMPLETAMENTE REMOVIDO - JOGO RESTAURADO AO NORMAL")
 end
 
